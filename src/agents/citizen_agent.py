@@ -49,12 +49,15 @@ class IntelligentCitizenAgent:
     
     def __init__(self):
         """Initialize the intelligent citizen agent."""
-        self.connector = VehicleRegistrationConnector(db_path=Path("../db/vehicles.db"))
+        self.connector = VehicleRegistrationConnector(db_path=Path("db/vehicles.db"))
         self.connector.initialize()
+        # Store LLM reference for direct access
+        from llama_index.core import Settings
+        self.llm = Settings.llm
         logger.info("Intelligent Citizen Agent initialized with LLM capabilities")
     
-    def process_question(self, question: str) -> Dict[str, Any]:
-        """Process any question and provide a comprehensive answer."""
+    def process_question(self, question: str, conversation_history: List[str] = None) -> Dict[str, Any]:
+        """Process any question and provide a comprehensive answer with context awareness."""
         try:
             # Step 1: Validate and interpret the question
             is_valid, error = self.validate_question(question)
@@ -65,10 +68,18 @@ class IntelligentCitizenAgent:
                     'answer': None
                 }
             
-            # Step 2: Intelligently rewrite and interpret the question
+            # Step 2: Check if this is a follow-up question that needs context
+            if self.is_followup_question(question, conversation_history):
+                return self.handle_followup_question(question, conversation_history)
+            
+            # Step 3: Check if this is an analytical question that needs LLM reasoning
+            if self.is_analytical_question(question):
+                return self.handle_analytical_question(question, conversation_history)
+            
+            # Step 4: Intelligently rewrite and interpret the question
             intent = self.interpret_question(question)
             
-            # Step 3: Generate comprehensive answer
+            # Step 4: Generate comprehensive answer
             answer = self.generate_comprehensive_answer(intent)
             
             return {
@@ -84,6 +95,159 @@ class IntelligentCitizenAgent:
             return {
                 'success': False,
                 'error': f"Sorry, I encountered an error processing your question: {str(e)}",
+                'answer': None
+            }
+    
+    def is_followup_question(self, question: str, conversation_history: List[str] = None) -> bool:
+        """Check if this is a follow-up question that needs context."""
+        if not conversation_history or len(conversation_history) == 0:
+            return False
+        
+        # Keywords that indicate follow-up questions
+        followup_indicators = [
+            "according to that", "based on that", "from above", "from the previous",
+            "what changes", "how can we", "what should we", "what do you think",
+            "what are your thoughts", "what recommendations", "what suggestions",
+            "what can be done", "what improvements", "what next", "what else"
+        ]
+        
+        question_lower = question.lower()
+        return any(indicator in question_lower for indicator in followup_indicators)
+    
+    def is_analytical_question(self, question: str) -> bool:
+        """Check if this is an analytical question that needs LLM reasoning, not SQL."""
+        question_lower = question.lower()
+        
+        # Keywords that indicate analytical questions (not data queries)
+        analytical_indicators = [
+            "pollution levels", "environmental impact", "air quality", "emissions",
+            "what are the implications", "what does this mean", "what are the effects",
+            "how does this affect", "what are the consequences", "what are the benefits",
+            "what are the risks", "what are the challenges", "what are the opportunities",
+            "what are the trends", "what are the patterns", "what are the insights",
+            "what are the recommendations", "what should be done", "what can be improved",
+            "what are the solutions", "what are the alternatives", "what are the options",
+            "what are the pros and cons", "what are the advantages", "what are the disadvantages",
+            "what is the impact", "what is the significance", "what is the importance",
+            "what is the relationship", "what is the correlation", "what is the connection",
+            "what is the cause", "what is the reason", "what is the explanation",
+            "what is the analysis", "what is the interpretation", "what is the conclusion"
+        ]
+        
+        return any(indicator in question_lower for indicator in analytical_indicators)
+    
+    def handle_analytical_question(self, question: str, conversation_history: List[str] = None) -> Dict[str, Any]:
+        """Handle analytical questions using LLM reasoning with available data context."""
+        try:
+            # Get conversation context if available
+            context_text = ""
+            if conversation_history:
+                recent_context = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
+                context_text = "\n".join([f"- {msg}" for msg in recent_context])
+            
+            # Create a comprehensive prompt for analytical questions
+            prompt = f"""
+            You are an AI assistant specializing in Telangana vehicle registration data analysis.
+            
+            Available data context:
+            {context_text}
+            
+            Available database information:
+            - Vehicle registration data with 1,880,183 records
+            - Fields: registration_number, maker_name, model_description, body_type, 
+              engine_cc, fuel_type, horsepower, seat_capacity, office_code, registration dates
+            - Fuel types: PETROL, DIESEL, BATTERY, CNG, etc.
+            - Vehicle types: motorcycles, cars, buses, trucks, etc.
+            - Manufacturers: Honda, Hero, Bajaj, Maruti, etc.
+            
+            Question: "{question}"
+            
+            Please provide a comprehensive analytical response that:
+            1. Acknowledges the limitations of the available data
+            2. Provides insights based on what can be inferred from vehicle registration data
+            3. Explains the relationship between vehicle data and the question asked
+            4. Offers educated analysis and recommendations
+            5. Suggests what additional data would be needed for more precise answers
+            
+            Be specific about Telangana context and provide actionable insights.
+            Do NOT attempt to generate SQL queries for this type of analytical question.
+            """
+            
+            response = self.llm.complete(prompt)
+            answer = response.text.strip()
+            
+            return {
+                'success': True,
+                'answer': answer,
+                'intent': QueryIntent(
+                    original_question=question,
+                    rewritten_question=question,
+                    query_type=QueryType.ANALYSIS,
+                    entities={'analytical': True},
+                    confidence=0.9
+                ),
+                'original_question': question,
+                'rewritten_question': question,
+                'is_analytical': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling analytical question: {e}")
+            return {
+                'success': False,
+                'error': f"Sorry, I had trouble processing your analytical question: {str(e)}",
+                'answer': None
+            }
+    
+    def handle_followup_question(self, question: str, conversation_history: List[str]) -> Dict[str, Any]:
+        """Handle follow-up questions using conversation context."""
+        try:
+            # Get the last few messages for context
+            recent_context = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
+            
+            # Create a context-aware prompt
+            context_text = "\n".join([f"- {msg}" for msg in recent_context])
+            
+            prompt = f"""
+            You are an AI assistant helping with Telangana vehicle registration data analysis.
+            
+            Previous conversation context:
+            {context_text}
+            
+            Current follow-up question: "{question}"
+            
+            Based on the previous context, provide a thoughtful, analytical response that:
+            1. References the previous data/answers appropriately
+            2. Provides insights, recommendations, or analysis
+            3. Is specific to the Telangana vehicle registration context
+            4. Offers actionable suggestions or observations
+            
+            Do NOT generate SQL queries for this type of question. Provide analytical insights instead.
+            """
+            
+            response = self.llm.complete(prompt)
+            answer = response.text.strip()
+            
+            return {
+                'success': True,
+                'answer': answer,
+                'intent': QueryIntent(
+                    original_question=question,
+                    rewritten_question=question,
+                    query_type=QueryType.ANALYSIS,
+                    entities={'context_aware': True},
+                    confidence=0.9
+                ),
+                'original_question': question,
+                'rewritten_question': question,
+                'is_followup': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling follow-up question: {e}")
+            return {
+                'success': False,
+                'error': f"Sorry, I had trouble processing your follow-up question: {str(e)}",
                 'answer': None
             }
     
@@ -126,7 +290,7 @@ class IntelligentCitizenAgent:
             ENTITIES: [key entities mentioned, comma-separated]
             """
             
-            response = self.connector.query_engine.llm.complete(prompt)
+            response = self.llm.complete(prompt)
             response_text = response.text.strip()
             
             # Parse the response
@@ -223,7 +387,7 @@ class IntelligentCitizenAgent:
             Provide a well-structured, informative response.
             """
             
-            response = self.connector.query_engine.llm.complete(prompt)
+            response = self.llm.complete(prompt)
             return response.text.strip()
             
         except Exception as e:
@@ -246,7 +410,7 @@ class IntelligentCitizenAgent:
             Available data includes: vehicle registrations, manufacturers, fuel types, body types, RTO offices, etc.
             """
             
-            response = self.connector.query_engine.llm.complete(prompt)
+            response = self.llm.complete(prompt)
             return response.text.strip()
             
         except Exception as e:

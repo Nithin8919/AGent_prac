@@ -16,6 +16,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 console = Console()
 

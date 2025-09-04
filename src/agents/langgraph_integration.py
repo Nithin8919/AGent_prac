@@ -25,7 +25,7 @@ from langchain_openai import ChatOpenAI
 
 # Import existing agents
 sys.path.append(str(Path(__file__).parent))
-from citizen_agent import IntelligentCitizenAgent, CitizenAgent, QueryIntent, QueryType
+from citizen_agent import IntelligentCitizenAgent, QueryIntent, QueryType
 from data_agent import DataAgent
 from analytics_agent import AnalyticsAgent
 from llamaindex_connector import VehicleRegistrationConnector
@@ -71,7 +71,7 @@ class IntegratedAgentState(TypedDict):
 class LangGraphCitizenAgent:
     """LangGraph wrapper for existing CitizenAgent/IntelligentCitizenAgent"""
     
-    def __init__(self, db_path: str = "../db/vehicles.db"):
+    def __init__(self, db_path: str = "db/vehicles.db"):
         """Initialize with existing intelligent citizen agent"""
         try:
             # Try intelligent agent first
@@ -79,9 +79,9 @@ class LangGraphCitizenAgent:
             self.agent_type = "intelligent"
             logger.info("✅ Using IntelligentCitizenAgent")
         except Exception as e:
-            # Fallback to basic agent
-            logger.warning(f"IntelligentCitizenAgent failed: {e}, using basic CitizenAgent")
-            self.agent = CitizenAgent()
+            # Fallback to basic agent - create a simple fallback
+            logger.warning(f"IntelligentCitizenAgent failed: {e}, using basic fallback")
+            self.agent = None  # Will handle this in the call method
             self.agent_type = "basic"
         
         self.name = "citizen_agent"
@@ -100,8 +100,14 @@ class LangGraphCitizenAgent:
             state["original_query"] = query
             
             # Process with appropriate agent
-            if self.agent_type == "intelligent":
-                result = self.agent.process_question(query)
+            if self.agent_type == "intelligent" and self.agent:
+                # Extract conversation history from messages
+                conversation_history = []
+                for msg in state["messages"]:
+                    if hasattr(msg, 'content'):
+                        conversation_history.append(msg.content)
+                
+                result = self.agent.process_question(query, conversation_history)
                 
                 if result['success']:
                     state["query_intent"] = {
@@ -110,34 +116,38 @@ class LangGraphCitizenAgent:
                         "rewritten": result['rewritten_question']
                     }
                     
-                    # Add processing message
-                    state["messages"].append(AIMessage(
-                        content=f"🧑‍💼 **Intelligent Query Processing**\n\nOriginal: {query}\nRewritten: {result['rewritten_question']}\n\n🔄 Routing to Data Agent..."
-                    ))
-                    
-                    state["next_agent"] = "data_agent"
+                    # Check if this is a follow-up or analytical question that should skip data agent
+                    if result.get('is_followup', False) or result.get('is_analytical', False):
+                        # For follow-up and analytical questions, use the answer directly
+                        state["final_answer"] = result['answer']
+                        question_type = "Context-Aware Analysis" if result.get('is_followup') else "Analytical Reasoning"
+                        state["messages"].append(AIMessage(
+                            content=f"🧑‍💼 **{question_type}**\n\n{result['answer']}"
+                        ))
+                        state["next_agent"] = "end"
+                    else:
+                        # Add processing message
+                        state["messages"].append(AIMessage(
+                            content=f"🧑‍💼 **Intelligent Query Processing**\n\nOriginal: {query}\nRewritten: {result['rewritten_question']}\n\n🔄 Routing to Data Agent..."
+                        ))
+                        state["next_agent"] = "data_agent"
                 else:
                     state["error_messages"].append(result.get('error', 'Query processing failed'))
                     state["next_agent"] = "end"
             
             else:
-                # Basic agent processing
-                is_valid, error = self.agent.validate_question(query)
-                if not is_valid:
-                    state["error_messages"].append(error)
-                    state["next_agent"] = "end"
-                    return state
-                
-                intent = self.agent.parse_question(query)
+                # Basic fallback processing - simple query handling
+                logger.info("Using basic fallback processing")
                 state["query_intent"] = {
-                    "query_type": intent.query_type.value,
-                    "entity": intent.entity,
-                    "filters": intent.filters,
-                    "limit": intent.limit
+                    "query_type": "count",  # Use valid QueryType
+                    "entity": "vehicle",
+                    "filters": {},
+                    "limit": 10,
+                    "original_query": query
                 }
                 
                 state["messages"].append(AIMessage(
-                    content=f"🧑‍💼 **Query Parsed**\n\nType: {intent.query_type.value}\nEntity: {intent.entity}\n\n🔄 Fetching data..."
+                    content=f"🧑‍💼 **Query Parsed**\n\nType: {state['query_intent']['query_type']}\nEntity: {state['query_intent']['entity']}\n\n🔄 Fetching data..."
                 ))
                 
                 state["next_agent"] = "data_agent"
@@ -155,7 +165,7 @@ class LangGraphCitizenAgent:
 class LangGraphDataAgent:
     """LangGraph wrapper for existing DataAgent"""
     
-    def __init__(self, db_path: str = "../db/vehicles.db", openai_api_key: str = None):
+    def __init__(self, db_path: str = "db/vehicles.db", openai_api_key: str = None):
         """Initialize with existing data agent"""
         self.agent = DataAgent(db_path, openai_api_key)
         self.name = "data_agent"
@@ -184,10 +194,11 @@ class LangGraphDataAgent:
                 # Basic agent format
                 from citizen_agent import QueryIntent, QueryType
                 intent_obj = QueryIntent(
+                    original_question=query_intent.get("original_query", ""),
+                    rewritten_question=query_intent.get("original_query", ""),
                     query_type=QueryType(query_intent["query_type"]),
-                    entity=query_intent.get("entity", ""),
-                    filters=query_intent.get("filters", {}),
-                    limit=query_intent.get("limit")
+                    entities={"entity": query_intent.get("entity", "vehicle")},
+                    confidence=0.8
                 )
                 result = self.agent.execute_query(intent_obj)
             else:
@@ -229,7 +240,7 @@ class LangGraphDataAgent:
 class LangGraphAnalyticsAgent:
     """LangGraph wrapper for existing AnalyticsAgent"""
     
-    def __init__(self, db_path: str = "../db/vehicles.db", openai_api_key: str = None):
+    def __init__(self, db_path: str = "db/vehicles.db", openai_api_key: str = None):
         """Initialize with existing analytics agent"""
         self.agent = AnalyticsAgent(db_path, openai_api_key)
         self.name = "analytics_agent"
@@ -441,7 +452,7 @@ class LangGraphSynthesisAgent:
 class IntegratedVehicleRegistrationSystem:
     """Orchestrator that uses existing agents with LangGraph"""
     
-    def __init__(self, db_path: str = "../db/vehicles.db", openai_api_key: str = None):
+    def __init__(self, db_path: str = "db/vehicles.db", openai_api_key: str = None):
         """Initialize integrated system"""
         
         self.db_path = db_path
@@ -547,7 +558,7 @@ class IntegratedApp:
     def __init__(self):
         self.system = None
     
-    def initialize(self, db_path: str = "../db/vehicles.db") -> bool:
+    def initialize(self, db_path: str = "db/vehicles.db") -> bool:
         """Initialize integrated system"""
         
         try:
@@ -629,7 +640,7 @@ def main():
     app = IntegratedApp()
     
     # Check database
-    db_path = Path("../db/vehicles.db")
+    db_path = Path("db/vehicles.db")
     if not db_path.exists():
         print(f"❌ Database not found: {db_path}")
         print("Please run data ingestion first: python src/data_ingestion.py")

@@ -351,7 +351,7 @@ class AnalyticsAgent:
             insights.append(f"Error generating insights: {str(e)}")
         
         return insights
-    
+ 
     def test_connection(self) -> bool:
         """Test if the analytics agent can connect to the database."""
         try:

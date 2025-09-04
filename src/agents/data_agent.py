@@ -21,7 +21,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from llamaindex_connector import VehicleRegistrationConnector
-from .citizen_agent import QueryIntent, QueryType
+from citizen_agent import QueryIntent, QueryType
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class DataAgent:
     """Agent for fetching and processing data from the database."""
     
-    def __init__(self, db_path: str = "../db/vehicles.db", openai_api_key: Optional[str] = None):
+    def __init__(self, db_path: str = "db/vehicles.db", openai_api_key: Optional[str] = None):
         """
         Initialize the data agent.
         
@@ -83,39 +83,42 @@ class DataAgent:
     
     def _intent_to_question(self, intent: QueryIntent) -> str:
         """Convert query intent back to natural language question."""
+        # Get entity from the entities dict for compatibility
+        entity = intent.entities.get("entity", "vehicle") if isinstance(intent.entities, dict) else "vehicle"
+        
         if intent.query_type == QueryType.COUNT:
-            if intent.entity == 'manufacturer':
+            if entity == 'manufacturer':
                 return "How many different vehicle manufacturers are there?"
-            elif intent.entity == 'fuel_type':
+            elif entity == 'fuel_type':
                 return "How many different fuel types are used by vehicles?"
-            elif intent.entity == 'vehicle_type':
+            elif entity == 'vehicle_type':
                 return "How many different vehicle types are there?"
             else:
                 return "How many vehicles are registered in total?"
         
         elif intent.query_type == QueryType.TOP_N:
             limit = intent.limit or 5
-            if intent.entity == 'manufacturer':
+            if entity == 'manufacturer':
                 return f"What are the top {limit} vehicle manufacturers by registration count?"
-            elif intent.entity == 'fuel_type':
+            elif entity == 'fuel_type':
                 return f"What are the top {limit} fuel types by usage?"
-            elif intent.entity == 'vehicle_type':
+            elif entity == 'vehicle_type':
                 return f"What are the top {limit} vehicle types by registration count?"
             else:
                 return f"What are the top {limit} most registered items?"
         
         elif intent.query_type == QueryType.COMPARISON:
-            if intent.entity == 'fuel_type':
+            if entity == 'fuel_type':
                 return "Compare the number of vehicles using petrol vs diesel fuel"
-            elif intent.entity == 'vehicle_type':
+            elif entity == 'vehicle_type':
                 return "Compare the number of motorcycles vs cars registered"
             else:
                 return "Show a comparison of the data"
         
         elif intent.query_type == QueryType.DISTRIBUTION:
-            if intent.entity == 'fuel_type':
+            if entity == 'fuel_type':
                 return "What is the distribution of fuel types used by vehicles?"
-            elif intent.entity == 'vehicle_type':
+            elif entity == 'vehicle_type':
                 return "What is the distribution of vehicle types?"
             else:
                 return "Show the distribution of the data"
