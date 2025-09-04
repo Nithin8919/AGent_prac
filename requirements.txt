@@ -1,0 +1,36 @@
+# Python dependencies for Vehicle Registration Project
+
+# Core data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Data visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
+
+# LlamaIndex and AI/ML
+llama-index>=0.9.0
+llama-index-llms-openai>=0.1.0
+llama-index-embeddings-openai>=0.1.0
+openai>=1.0.0
+
+# Database and connectors
+sqlalchemy>=2.0.0
+llama-index-connector-sqlalchemy>=0.1.0
+
+# Web framework (for chatbot interface)
+streamlit>=1.28.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+loguru>=0.7.0
+
+# Development and testing
+jupyter>=1.0.0
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
